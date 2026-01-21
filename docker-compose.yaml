@@ -1,0 +1,161 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Desabilitar notificações de email (não há SMTP configurado)
+    AIRFLOW__EMAIL__EMAIL_BACKEND: "airflow.utils.email.send_email_smtp"
+    AIRFLOW__EMAIL__DEFAULT_EMAIL_ON_RETRY: "false"
+    AIRFLOW__EMAIL__DEFAULT_EMAIL_ON_FAILURE: "false"
+    # Conexão com o banco de produção (onde estão os tickets)
+    POSTGRES_CONN_ID: ${POSTGRES_CONN_ID:-postgres_prod}
+    POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+    POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+    POSTGRES_DB: ${POSTGRES_DB:-your_database}
+    POSTGRES_USER: ${POSTGRES_USER:-postgres}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    POSTGRES_SCHEMA: ${POSTGRES_SCHEMA:-public}
+    # Azure Data Lake Storage Gen2
+    AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME}
+    AZURE_CONTAINER_NAME: ${AZURE_CONTAINER_NAME:-tickets-data}
+    AZURE_TENANT_ID: ${AZURE_TENANT_ID}
+    AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
+    AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/sql:/opt/airflow/sql
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    postgres-airflow:
+      condition: service_healthy
+  networks:
+    - airflow-network
+
+services:
+  postgres-airflow:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+    networks:
+      - airflow-network
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - airflow-network
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - airflow-network
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Criar diretórios e ajustar permissões
+        mkdir -p /sources/logs /sources/dags /sources/plugins /sources/sql
+        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins,sql}
+
+        # Executar inicialização do Airflow (banco + usuário)
+        /entrypoint airflow version
+
+        # Agora mudar para o usuário airflow para executar comandos
+        su airflow -c "
+          export AIRFLOW_HOME=/opt/airflow
+          echo '🔧 Criando conexão ${POSTGRES_CONN_ID}...'
+          airflow connections delete '${POSTGRES_CONN_ID}' 2>/dev/null || true
+          airflow connections add '${POSTGRES_CONN_ID}' \
+            --conn-type 'postgres' \
+            --conn-host '${POSTGRES_HOST_DOCKER}' \
+            --conn-login '${POSTGRES_USER}' \
+            --conn-password '${POSTGRES_PASSWORD}' \
+            --conn-schema '${POSTGRES_DB}' \
+            --conn-port '${POSTGRES_PORT}'
+          echo '✅ Conexão ${POSTGRES_CONN_ID} criada com sucesso!'
+          airflow connections get '${POSTGRES_CONN_ID}'
+        "
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      _PIP_ADDITIONAL_REQUIREMENTS: ""
+    user: "0:0"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}:/sources
+      - ${AIRFLOW_PROJ_DIR:-.}/scripts:/opt/airflow/scripts
+    networks:
+      - airflow-network
+
+  airflow-cli:
+    <<: *airflow-common
+    profiles:
+      - debug
+    environment:
+      <<: *airflow-common-env
+      CONNECTION_CHECK_MAX_COUNT: "0"
+    command:
+      - bash
+      - -c
+      - airflow
+    networks:
+      - airflow-network
+
+volumes:
+  postgres-db-volume:
+
+networks:
+  airflow-network:
+    driver: bridge
