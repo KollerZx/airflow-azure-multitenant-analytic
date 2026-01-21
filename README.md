@@ -5,7 +5,6 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 [![Airflow](https://img.shields.io/badge/Airflow-2.8.1-blue)](https://airflow.apache.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12%2B-blue)](https://www.postgresql.org/)
 [![Azure](https://img.shields.io/badge/Azure-Data%20Lake%20Gen2-blue)](https://azure.microsoft.com/services/storage/data-lake-storage/)
-[![Multi-Tenant](https://img.shields.io/badge/Multi--Tenant-Isolado-green)](MULTI_TENANT_ISOLATION_LIMITATIONS.md)
 
 ---
 
@@ -46,7 +45,6 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
                     │  DAG 1: Refresh Views  │
                     │  DAG 2: Export to ADLS │
                     │  Execução: 15 minutos  │
-                    │  Config: data_config.yaml │
                     └────────────────────────┘
                                  ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -94,24 +92,11 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 | **[AZURE_DATALAKE.md](AZURE_DATALAKE.md)** | 📘 Guia completo do Azure Data Lake | Configuração detalhada do Azure |
 | **[sql/README.md](sql/README.md)** | 📜 Views materializadas e SQL | Entender estrutura dos dados |
 
-### 🔒 Segurança e Multi-Tenant
-
-| Documento | Descrição | Quando Usar |
-|-----------|-----------|-------------|
-| **[MULTI_TENANT_ISOLATION_LIMITATIONS.md](MULTI_TENANT_ISOLATION_LIMITATIONS.md)** | 💡 Como funciona o isolamento com ACLs | Entender modelo de segurança |
-| **[TESTE_ISOLAMENTO.md](TESTE_ISOLAMENTO.md)** | 🧪 Guia de testes de isolamento | Validar isolamento após setup |
-
 ### 🤖 Automação
 
 | Documento | Descrição | Quando Usar |
 |-----------|-----------|-------------|
 | **[scripts/README.md](scripts/README.md)** | 🐍 Scripts de automação Python/Bash | Criar Service Principals automaticamente |
-
-### 📊 Análise de Dados
-
-| Documento | Descrição | Quando Usar |
-|-----------|-----------|-------------|
-| **[QUERY_EXAMPLES.md](QUERY_EXAMPLES.md)** | 📊 Exemplos de queries e análises | Inspiração para relatórios |
 
 ---
 
@@ -128,7 +113,6 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 
 - Pastas isoladas: `tenant_<uuid>/`
 - Tentativas de acesso a outras pastas retornam erro 403
-- Validado em testes automatizados (ver [TESTE_ISOLAMENTO.md](TESTE_ISOLAMENTO.md))
 
 ✅ **Processo automatizado**
 
@@ -136,8 +120,6 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 # Criar Service Principal + configurar ACLs automaticamente
 python scripts/generate_azure_service_principals.py --tenants "Nome do Tenant"
 ```
-
-📖 **Documentação completa**: [MULTI_TENANT_ISOLATION_LIMITATIONS.md](MULTI_TENANT_ISOLATION_LIMITATIONS.md)
 
 ---
 
@@ -224,8 +206,6 @@ airflow-datalake-etl-azure-multitenant/
 │
 ├── 📘 AZURE_DATALAKE.md             # ⭐ Guia completo Azure Data Lake
 ├── 🚀 QUICKSTART.md                 # Setup rápido
-├── 🔐 MULTI_TENANT.md               # Segurança multi-tenant
-├── 📊 QUERY_EXAMPLES.md             # Exemplos de queries
 │
 ├── 🐳 docker-compose.yaml           # Orquestração Airflow
 ├── 🐳 Dockerfile                    # Imagem customizada com Azure SDK
@@ -378,8 +358,6 @@ WITH (
 - Queries SQL complexas
 - Data Science em escala
 
-**📊 Queries de exemplo:** [QUERY_EXAMPLES.md](QUERY_EXAMPLES.md)
-
 ---
 
 ## 🛠️ Tecnologias
@@ -391,18 +369,6 @@ WITH (
 - **Docker & Docker Compose** - Containerização
 - **Python 3.11** - Scripts de automação
 - **Azure SDK** - Integração com Azure
-
-<!-- ---
-
-## 💰 Comparação de Custos
-
-| Solução | Custo Mensal (50 usuários) | Limitações |
-|---------|---------------------------|------------|
-| **Power BI Pro** | USD 500 (10/usuário) | Gerenciamento complexo, licenças por usuário |
-| **Power BI Premium** | USD 4.995+ | Alto custo inicial, sobreprovisionamento |
-| **Azure Data Lake** | USD 30-50 | ✅ Sem licenças por usuário, self-service |
-
-**ROI:** Economia de ~USD 450-4.900/mês com Azure Data Lake 🎉 -->
 
 ---
 
@@ -507,8 +473,6 @@ docker compose exec airflow-webserver airflow tasks clear \
   --end-date "2026-01-19" \
   --yes
 ```
-
-**📖 Para referência completa de comandos CLI, consulte:** [AIRFLOW_CLI_REFERENCE.md](AIRFLOW_CLI_REFERENCE.md)
 
 ---
 
@@ -634,66 +598,5 @@ docker compose up -d
 **Causa:** Muitos arquivos pequenos.
 
 **Solução:** Implementar DAG de compactação semanal para consolidar arquivos.
-
----
-
-## 📞 Suporte
-
-**Documentação Principal:**
-
-- **[AZURE_DATALAKE.md](AZURE_DATALAKE.md)** - Guia completo Azure
-- **[QUICKSTART.md](QUICKSTART.md)** - Setup rápido
-- **[MULTI_TENANT.md](MULTI_TENANT.md)** - Segurança multi-tenant
-- **[QUERY_EXAMPLES.md](QUERY_EXAMPLES.md)** - Queries de exemplo
-
-**Problemas Comuns:**
-
-- Verificar logs: `docker logs airflow-scheduler`
-- Testar Azure CLI: `az storage account show --name <storage>`
-- Validar Service Principals: Scripts em `azure/`
-
----
-
-## ⚠️ Avisos Importantes
-
-### Segurança
-
-🔒 **Isolamento Físico:** Cada tenant em pasta separada no Azure  
-🔒 **Credenciais:** NUNCA commitar CLIENT_SECRET no Git  
-🔒 **Rotação:** Renovar Service Principals anualmente  
-🔒 **Auditoria:** Monitorar acessos no Azure Monitor  
-🔒 **Princípio do Menor Privilégio:** Read-only para clientes  
-
-### Performance
-
-⚡ Parquet otimizado para leitura colunar  
-⚡ Particionamento por data reduz scan de dados  
-⚡ Compactação semanal recomendada para consolidar arquivos  
-⚡ Considerar Hot → Cool → Archive Tier após 30/90/365 dias  
-
-### Custos
-
-💰 Monitorar uso de storage (crescimento esperado: ~1-5 GB/dia por tenant)  
-💰 Otimizar queries para ler apenas partições necessárias  
-💰 Implementar lifecycle policies (Hot → Cool após 30 dias)  
-💰 Alertar se custos ultrapassarem threshold definido  
-
----
-
-## 📜 Licença
-
-Projeto interno - Todos os direitos reservados.
-
----
-
-## 📊 Status do Projeto
-
-✅ **Views materializadas PostgreSQL** - Implementadas  
-✅ **Airflow DAG (refresh)** - Funcionando (15 min)  
-✅ **Airflow DAG (export Azure)** - Implementado  
-✅ **Azure Data Lake Gen2** - Arquitetura definida  
-✅ **Isolamento multi-tenant** - Pastas físicas por tenant  
-✅ **Scripts de automação** - Service Principals, credenciais  
-✅ **Documentação completa** - Azure, segurança, consumo  
 
 ---

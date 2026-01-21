@@ -290,9 +290,9 @@ ls azure_client_docs_*/<tenant>_access_guide.md
 
 **⚠️ IMPORTANTE:** Enviar credenciais por canal seguro (NÃO por email):
 
-- Tenant ID
-- Client ID  
-- Client Secret
+- Azure Tenant ID
+- Azure Client ID  
+- Azure Client Secret
 - Storage Account Name: `ticketsdatalake`
 - Container Name: `tickets-data`
 
@@ -850,10 +850,6 @@ bash azure/create_service_principals_*.sh
 ## �📚 Documentação Complementar
 
 - **[AZURE_DATALAKE.md](AZURE_DATALAKE.md)** - Guia completo Azure Data Lake
-- **[IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md)** - Passo-a-passo de implementação
-- **[MULTI_TENANT.md](MULTI_TENANT.md)** - Estratégias de segurança multi-tenant
-- **[QUERY_EXAMPLES.md](QUERY_EXAMPLES.md)** - 30+ exemplos de análises
-- **[OVERVIEW.md](OVERVIEW.md)** - Visão geral visual da arquitetura
 
 ---
 
@@ -885,7 +881,3 @@ bash azure/create_service_principals_*.sh
 docker logs -f airflow-scheduler | grep export_tickets_to_azure_datalake
 az storage fs file list --account-name ticketsdatalake --file-system tickets-data --auth-mode login
 ```
-
----
-
-**🎉 Pronto! Sistema multi-tenant configurado e seguro.**

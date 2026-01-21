@@ -852,8 +852,3 @@ az storage account management-policy create \
 - [Azure Data Lake Storage Gen2 - Documentação Oficial](https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-introduction)
 - [Access Control Lists (ACLs)](https://learn.microsoft.com/en-us/azure/storage/blobs/data-lake-storage-access-control)
 - [Apache Parquet Format](https://parquet.apache.org/docs/)
-- [Power BI - Azure Data Lake Connector](https://learn.microsoft.com/en-us/power-bi/connect-data/service-azure-data-lake-storage-gen2)
-
----
-
-**Última atualização:** 14 de janeiro de 2026
