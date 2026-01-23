@@ -40,7 +40,7 @@ SELECT
     
     -- Status do SLA
     CASE 
-        WHEN t.finish_time IS NOT NULL AND t.finish_time <= (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 999999))
+        WHEN t.finish_time IS NOT NULL AND t.finish_time <= (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0))
             THEN 'Within SLA'
         WHEN t.finish_time IS NOT NULL AND t.finish_time > (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0))
             THEN 'SLA Breached'
