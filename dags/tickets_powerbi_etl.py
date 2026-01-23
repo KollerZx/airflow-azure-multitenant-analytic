@@ -2,7 +2,6 @@
 DAG: tickets_powerbi_etl
 Descrição: Pipeline ETL para carregar dados de tickets no Power BI
 Frequência: A cada 15 minutos (configurável)
-Autor: Data Team
 """
 
 from airflow import DAG

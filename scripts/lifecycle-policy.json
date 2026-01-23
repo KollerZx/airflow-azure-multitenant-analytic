@@ -1,0 +1,61 @@
+{
+  "rules": [
+    {
+      "enabled": true,
+      "name": "MoveToArchiveAfter90Days",
+      "type": "Lifecycle",
+      "definition": {
+        "actions": {
+          "baseBlob": {
+            "tierToCool": {
+              "daysAfterModificationGreaterThan": 30
+            },
+            "tierToArchive": {
+              "daysAfterModificationGreaterThan": 90
+            },
+            "delete": {
+              "daysAfterModificationGreaterThan": 730
+            }
+          }
+        },
+        "filters": {
+          "blobTypes": [
+            "blockBlob"
+          ],
+          "prefixMatch": [
+            "tickets-data/"
+          ]
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "name": "DeleteOldCompactionFiles",
+      "type": "Lifecycle",
+      "definition": {
+        "actions": {
+          "baseBlob": {
+            "delete": {
+              "daysAfterModificationGreaterThan": 7
+            }
+          }
+        },
+        "filters": {
+          "blobTypes": [
+            "blockBlob"
+          ],
+          "prefixMatch": [
+            "tickets-data/"
+          ],
+          "blobIndexMatch": [
+            {
+              "name": "compaction_status",
+              "op": "==",
+              "value": "superseded"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

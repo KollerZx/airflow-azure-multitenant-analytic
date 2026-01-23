@@ -48,4 +48,5 @@ standalone_admin_password.txt
 *.tmp
 *.bak
 
-azure*
+azure/*
+tests/

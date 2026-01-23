@@ -5,8 +5,6 @@ com isolamento por tenant_id.
 Cada tenant tem sua própria pasta: tenant_<uuid>/
 Estrutura: tenant_<uuid>/table_name/year=YYYY/month=MM/day=DD/*.parquet
 
-Autor: Airflow Team
-Data: 2026-01-14
 """
 
 from datetime import datetime, timedelta
@@ -105,50 +103,191 @@ def get_tenants_with_directories():
         
     except Exception as e:
         print(f"⚠️ Erro ao listar diretórios do Azure: {e}")
-        print("⚠️ Exportação será feita para TODOS os tenants do banco")
+        print("⚠️ Exportação será feita para TODAS as tenants do banco")
         return set()
 
 
-def upload_dataframe_to_datalake(df, file_path):
+def get_tenant_export_config(hook, tenant_id):
     """
-    Faz upload de DataFrame como Parquet para o Azure Data Lake.
+    Obtém configuração de formatos de exportação para uma tenant.
+    Retorna formatos habilitados, delimitador CSV, encoding, etc.
+    
+    Args:
+        hook (PostgresHook): Conexão PostgreSQL
+        tenant_id (str): UUID da tenant
+    
+    Returns:
+        dict: Configuração de exportação {formats: [], csv_delimiter, csv_encoding, parquet_compression}
+    """
+    query = f"""
+        SELECT * FROM {POSTGRES_SCHEMA}.get_tenant_export_config('{tenant_id}')
+    """
+    result = hook.get_first(query)
+    
+    if result:
+        return {
+            'formats': result[0] if result[0] else ['parquet'],
+            'csv_delimiter': result[1] or ',',
+            'csv_encoding': result[2] or 'utf-8',
+            'csv_date_format': result[3] or '%Y-%m-%d %H:%M:%S',
+            'parquet_compression': result[4] or 'snappy'
+        }
+    else:
+        # Configuração padrão se tenant não existe
+        return {
+            'formats': ['parquet'],
+            'csv_delimiter': ',',
+            'csv_encoding': 'utf-8',
+            'csv_date_format': '%Y-%m-%d %H:%M:%S',
+            'parquet_compression': 'snappy'
+        }
+
+
+def get_tenant_watermark(hook, tenant_id):
+    """
+    Obtém o último created_at exportado para uma tenant (watermark).
+    Se não existir, retorna None (primeira exportação).
+    
+    Args:
+        hook (PostgresHook): Conexão PostgreSQL
+        tenant_id (str): UUID da tenant
+    
+    Returns:
+        datetime or None: Último created_at exportado ou None
+    """
+    query = f"""
+        SELECT last_exported_created_at 
+        FROM {POSTGRES_SCHEMA}.export_watermark 
+        WHERE tenant_id = '{tenant_id}'
+    """
+    result = hook.get_first(query)
+    return result[0] if result else None
+
+
+def update_tenant_watermark(hook, tenant_id, last_created_at, rows_exported, export_type='INCREMENTAL'):
+    """
+    Atualiza o watermark após exportação bem-sucedida.
+    OBS: Watermark é único por tenant (não duplicado por formato).
+    
+    Args:
+        hook (PostgresHook): Conexão PostgreSQL
+        tenant_id (str): UUID da tenant
+        last_created_at (datetime): Último created_at exportado
+        rows_exported (int): Quantidade de registros exportados
+        export_type (str): Tipo de exportação ('FULL' ou 'INCREMENTAL')
+    """
+    query = f"""
+        INSERT INTO {POSTGRES_SCHEMA}.export_watermark 
+            (tenant_id, last_exported_created_at, rows_exported, export_type)
+        VALUES ('{tenant_id}', '{last_created_at}', {rows_exported}, '{export_type}')
+        ON CONFLICT (tenant_id) DO UPDATE SET
+            last_exported_created_at = EXCLUDED.last_exported_created_at,
+            last_export_success_at = NOW(),
+            rows_exported = EXCLUDED.rows_exported,
+            export_type = EXCLUDED.export_type,
+            updated_at = NOW()
+    """
+    hook.run(query)
+    print(f"✅ Watermark atualizado: {tenant_id} -> {last_created_at} ({rows_exported} rows)")
+
+
+def log_export_to_database(hook, tenant_id, file_format, rows_exported, file_path, export_type, duration_seconds=0, status='SUCCESS'):
+    """
+    Registra exportação no bi_refresh_log para auditoria.
+    
+    Args:
+        hook (PostgresHook): Conexão PostgreSQL
+        tenant_id (str): UUID da tenant
+        file_format (str): Formato do arquivo ('parquet' ou 'csv')
+        rows_exported (int): Quantidade de registros
+        file_path (str): Path completo no Azure
+        export_type (str): 'FULL' ou 'INCREMENTAL'
+        duration_seconds (float): Tempo de execução
+        status (str): 'SUCCESS' ou 'ERROR'
+    """
+    query = f"""
+        INSERT INTO {POSTGRES_SCHEMA}.bi_refresh_log (
+            view_name, status, rows_affected, duration_seconds,
+            airflow_dag_id, tenant_id, export_type, file_format,
+            files_created, export_destination, azure_storage_account,
+            azure_container, azure_file_path
+        )
+        VALUES (
+            'export_tickets_to_azure_datalake',
+            '{status}',
+            {rows_exported},
+            {duration_seconds},
+            'export_tickets_to_azure_datalake',
+            '{tenant_id}',
+            '{export_type}',
+            '{file_format}',
+            1,
+            'AZURE_DATALAKE',
+            '{AZURE_STORAGE_ACCOUNT}',
+            '{AZURE_CONTAINER}',
+            '{file_path}'
+        )
+    """
+    hook.run(query)
+
+
+def upload_dataframe_to_datalake(df, file_path, file_format='parquet', config=None):
+    """
+    Faz upload de DataFrame para o Azure Data Lake em formato especificado.
     
     Args:
         df (pd.DataFrame): DataFrame com os dados a serem exportados
-        file_path (str): Caminho completo no Data Lake 
-                        (ex: tenant_xxx/tickets/year=2026/month=01/day=14/data_timestamp.parquet)
+        file_path (str): Caminho completo no Data Lake
+        file_format (str): Formato do arquivo ('parquet' ou 'csv')
+        config (dict): Configurações específicas do formato (compressão, delimiter, etc)
     """
     service_client = get_datalake_client()
     file_system_client = service_client.get_file_system_client(file_system=AZURE_CONTAINER)
     
-    # Converter DataFrame para Parquet em memória
-    parquet_buffer = io.BytesIO()
-    df.to_parquet(
-        parquet_buffer, 
-        engine='pyarrow', 
-        compression='snappy',  # Compressão otimizada para analytics
-        index=False
-    )
-    parquet_buffer.seek(0)
+    config = config or {}
+    buffer = io.BytesIO()
+    
+    # Converter DataFrame para o formato especificado
+    if file_format == 'parquet':
+        df.to_parquet(
+            buffer,
+            engine='pyarrow',
+            compression=config.get('parquet_compression', 'snappy'),
+            index=False
+        )
+    elif file_format == 'csv':
+        df.to_csv(
+            buffer,
+            sep=config.get('csv_delimiter', ','),
+            encoding=config.get('csv_encoding', 'utf-8'),
+            index=False,
+            date_format=config.get('csv_date_format', '%Y-%m-%d %H:%M:%S')
+        )
+    else:
+        raise ValueError(f"Formato não suportado: {file_format}")
+    
+    buffer.seek(0)
     
     # Upload para Data Lake (sobrescreve se já existir)
     file_client = file_system_client.get_file_client(file_path)
-    file_client.upload_data(parquet_buffer.read(), overwrite=True)
+    file_client.upload_data(buffer.read(), overwrite=True)
     
-    file_size_kb = len(parquet_buffer.getvalue()) / 1024
-    print(f"✅ Uploaded {len(df):,} rows ({file_size_kb:.2f} KB) to {file_path}")
+    file_size_kb = len(buffer.getvalue()) / 1024
+    print(f"✅ Uploaded {len(df):,} rows ({file_size_kb:.2f} KB) to {file_path} [{file_format.upper()}]")
 
 
 def export_tickets_to_datalake(**context):
     """
-    Exporta bi_tickets_flat para Azure Data Lake, particionado por tenant_id e data.
+    Exporta bi_tickets_flat para Azure Data Lake com exportação incremental baseada em watermark.
     
-    Estratégia:
-    - Query incremental: apenas tickets criados/finalizados nas últimas 24h
+    Estratégia OTIMIZADA:
+    - Usa watermark (último created_at exportado) por tenant para evitar duplicatas
+    - Fallback: janela de 30 minutos se watermark não existir
     - Agrupa por tenant_id para garantir isolamento físico
-    - Exporta APENAS para tenants que têm diretório no Azure (com Service Principal configurado)
+    - Exporta APENAS para tenants que têm diretório no Azure
     - Particionamento Hive: year=YYYY/month=MM/day=DD/
     - Formato: Parquet com compressão Snappy
+    - Atualiza watermark após sucesso
     """
     hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
     
@@ -162,33 +301,6 @@ def export_tickets_to_datalake(**context):
     
     print(f"📂 Tenants com diretórios no Azure: {len(azure_tenants)}")
     
-    # Query incremental: últimas 24h (usando created_at e finish_time)
-    query = f"""
-        SELECT 
-            *
-        FROM {POSTGRES_SCHEMA}.bi_tickets_flat
-        WHERE created_at >= NOW() - INTERVAL '1 day' 
-           OR finish_time >= NOW() - INTERVAL '1 day'
-    """
-    
-    print("🔍 Buscando tickets atualizados nas últimas 24h...")
-    df = hook.get_pandas_df(query)
-    
-    if df.empty:
-        print("⚠️ Nenhum ticket atualizado nas últimas 24h")
-        return
-    
-    # Filtrar apenas tenants que têm diretório no Azure
-    df_filtered = df[df['tenant_id'].isin(azure_tenants)]
-    
-    if df_filtered.empty:
-        tenants_no_dir = df['tenant_id'].unique()
-        print(f"⚠️ Tickets encontrados para {len(tenants_no_dir)} tenant(s), mas nenhuma tem diretório no Azure:")
-        for tenant_id in tenants_no_dir:
-            print(f"   - {tenant_id}")
-        print("⚠️ Execute generate_azure_service_principals.py para criar Service Principals para estes tenants")
-        return
-    
     # Informações de particionamento baseadas na execution_date
     execution_date = context['execution_date']
     year = execution_date.strftime('%Y')
@@ -196,27 +308,162 @@ def export_tickets_to_datalake(**context):
     day = execution_date.strftime('%d')
     timestamp = execution_date.strftime('%Y%m%d_%H%M%S')
     
-    # Agrupar por tenant_id e exportar separadamente (isolamento físico)
-    total_tenants = df_filtered['tenant_id'].nunique()
-    tenants_skipped = df['tenant_id'].nunique() - total_tenants
+    # Contadores para estatísticas
+    total_exported = 0
+    total_tenants_exported = 0
+    tenants_skipped = 0
+    tenants_no_new_data = 0
     
-    print(f"📊 Exportando para {total_tenants} tenant(s) com Service Principal configurado")
-    if tenants_skipped > 0:
-        print(f"⏭️  Ignorando {tenants_skipped} tenant(s) sem diretório no Azure")
-    
-    for idx, (tenant_id, group_df) in enumerate(df_filtered.groupby('tenant_id'), 1):
-        file_path = (
-            f"tenant_{tenant_id}/tickets/"
-            f"year={year}/month={month}/day={day}/"
-            f"tickets_{timestamp}.parquet"
-        )
+    # Processar cada tenant individualmente (permite watermark por tenant)
+    for tenant_id in azure_tenants:
+        print(f"\n{'='*80}")
+        print(f"Processando tenant: {tenant_id}")
+        print(f"{'='*80}")
         
-        upload_dataframe_to_datalake(group_df, file_path)
-        print(f"[{idx}/{total_tenants}] Tenant {tenant_id}: {len(group_df):,} tickets")
+        # Obter watermark da tenant
+        watermark = get_tenant_watermark(hook, tenant_id)
+        
+        if watermark:
+            # Exportação incremental: apenas tickets APÓS o último exportado
+            print(f"✅ Watermark encontrado: {watermark}")
+            query = f"""
+                SELECT *
+                FROM {POSTGRES_SCHEMA}.bi_tickets_flat
+                WHERE tenant_id = '{tenant_id}'
+                  AND created_at > '{watermark}'
+                ORDER BY created_at
+            """
+            export_type = 'INCREMENTAL'
+        else:
+            # Primeira exportação: usar fallback de 30 minutos (2x a frequência do DAG)
+            print("⚠️ Watermark não encontrado (primeira exportação)")
+            print("📊 Usando fallback: últimos 30 minutos")
+            query = f"""
+                SELECT *
+                FROM {POSTGRES_SCHEMA}.bi_tickets_flat
+                WHERE tenant_id = '{tenant_id}'
+                  AND (created_at >= NOW() - INTERVAL '30 minutes' 
+                       OR finish_time >= NOW() - INTERVAL '30 minutes')
+                ORDER BY created_at
+            """
+            export_type = 'FULL'
+        
+        # Buscar dados
+        df = hook.get_pandas_df(query)
+        
+        if df.empty:
+            print(f"ℹ️ Nenhum dado novo para exportar (tenant já está atualizada)")
+            tenants_no_new_data += 1
+            continue
+        
+        print(f"📊 Encontrados {len(df):,} tickets novos para exportar")
+        
+        # Obter configuração de formatos para a tenant
+        export_config = get_tenant_export_config(hook, tenant_id)
+        formats_to_export = export_config['formats']
+        
+        print(f"📋 Formatos habilitados: {', '.join(formats_to_export)}")
+        
+        # Obter último created_at exportado (para watermark)
+        last_created_at = df['created_at'].max()
+        
+        formats_success = 0
+        formats_failed = 0
+        
+        # Processar cada formato habilitado
+        for file_format in formats_to_export:
+            extension = file_format  # 'parquet' ou 'csv'
+            
+            # Preparar caminho do arquivo com particionamento por formato
+            file_path = (
+                f"tenant_{tenant_id}/tickets/"
+                f"format={file_format}/"
+                f"year={year}/month={month}/day={day}/"
+                f"tickets_{timestamp}.{extension}"
+            )
+            
+            try:
+                import time
+                start_time = time.time()
+                
+                # Upload para Azure Data Lake no formato especificado
+                upload_dataframe_to_datalake(
+                    df=df,
+                    file_path=file_path,
+                    file_format=file_format,
+                    config=export_config
+                )
+                
+                duration = time.time() - start_time
+                
+                # Registrar exportação no log
+                log_export_to_database(
+                    hook=hook,
+                    tenant_id=tenant_id,
+                    file_format=file_format,
+                    rows_exported=len(df),
+                    file_path=file_path,
+                    export_type=export_type,
+                    duration_seconds=round(duration, 2),
+                    status='SUCCESS'
+                )
+                
+                formats_success += 1
+                print(f"   ✅ {file_format.upper()}: {len(df):,} tickets exportados")
+                
+            except Exception as e:
+                print(f"   ❌ Erro ao exportar {file_format.upper()}: {e}")
+                formats_failed += 1
+                
+                # Registrar erro no log
+                try:
+                    log_export_to_database(
+                        hook=hook,
+                        tenant_id=tenant_id,
+                        file_format=file_format,
+                        rows_exported=0,
+                        file_path=file_path,
+                        export_type=export_type,
+                        status='ERROR'
+                    )
+                except:
+                    pass  # Ignora erro ao registrar erro
+                
+                continue
+        
+        # Atualizar watermark apenas se pelo menos 1 formato teve sucesso
+        if formats_success > 0:
+            try:
+                update_tenant_watermark(
+                    hook=hook,
+                    tenant_id=tenant_id,
+                    last_created_at=last_created_at,
+                    rows_exported=len(df),
+                    export_type=export_type
+                )
+                
+                total_exported += len(df)
+                total_tenants_exported += 1
+                
+                print(f"✅ Tenant {tenant_id}: {formats_success}/{len(formats_to_export)} formatos exportados")
+                print(f"   Último created_at: {last_created_at}")
+                
+            except Exception as e:
+                print(f"⚠️ Erro ao atualizar watermark: {e}")
+        else:
+            print(f"❌ Todos os formatos falharam para tenant {tenant_id}")
+            tenants_skipped += 1
     
-    print(f"✅ Exportação concluída: {len(df_filtered):,} registros em {total_tenants} tenant(s)")
-
-
+    # Resumo final
+    print(f"\n{'='*80}")
+    print("📊 RESUMO DA EXPORTAÇÃO")
+    print(f"{'='*80}")
+    print(f"✅ Total exportado: {total_exported:,} registros")
+    print(f"✅ Tenants exportados: {total_tenants_exported}/{len(azure_tenants)}")
+    print(f"ℹ️ Tenants sem dados novos: {tenants_no_new_data}")
+    if tenants_skipped > 0:
+        print(f"⚠️ Tenants com erro: {tenants_skipped}")
+    print(f"{'='*80}\n")
 
 
 # Definir task

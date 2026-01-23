@@ -7,14 +7,20 @@ pela primeira vez. Após a execução inicial, o DAG do Airflow mantém apenas
 exportações incrementais (últimas 24h).
 
 Uso:
+    # Exportar como Parquet (padrão)
     python scripts/export_initial_full_data.py
+    
+    # Exportar como CSV
+    python scripts/export_initial_full_data.py --format csv
+    
+    # Exportar como Parquet explicitamente
+    python scripts/export_initial_full_data.py --format parquet
 
-Autor: Airflow Team
-Data: 2026-01-19
 """
 
 import os
 import sys
+import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 import pandas as pd
@@ -130,7 +136,7 @@ def get_tenants_with_folders():
         
         tenants = set()
         for path in paths:
-            # Filtrar apenas diretórios raiz tenant_<uuid> (sem subdiretórios)
+            # Filtrar apenas diretórios raiz tenant_<uuid> (sem subdireórios)
             if path.name.startswith('tenant_') and path.is_directory:
                 # Extrair apenas o nome do diretório raiz (ignorar subpaths como tenant_xxx/tickets)
                 path_parts = path.name.split('/')
@@ -151,51 +157,66 @@ def get_tenants_with_folders():
         
     except Exception as e:
         print(f"⚠️  Erro ao listar diretórios do Azure: {e}")
-        print("💡 Retornando conjunto vazio - nenhum tenant será exportado")
+        print("💡 Retornando conjunto vazio - nenhuma tenant será exportada")
         return set()
 
 
-def upload_dataframe_to_datalake(df, file_path, service_client):
+def upload_dataframe_to_datalake(df, file_path, service_client, file_format='parquet'):
     """
-    Faz upload de DataFrame como Parquet para o Azure Data Lake.
+    Faz upload de DataFrame para o Azure Data Lake no formato especificado.
     
     Args:
         df (pd.DataFrame): DataFrame com os dados
         file_path (str): Caminho no Data Lake
         service_client: Cliente do Data Lake
+        file_format (str): Formato do arquivo ('parquet' ou 'csv')
     """
     file_system_client = service_client.get_file_system_client(file_system=AZURE_CONTAINER)
     
-    # Converter DataFrame para Parquet em memória
-    parquet_buffer = io.BytesIO()
-    df.to_parquet(
-        parquet_buffer, 
-        engine='pyarrow', 
-        compression='snappy',
-        index=False
-    )
-    parquet_buffer.seek(0)
+    # Converter DataFrame para o formato especificado
+    buffer = io.BytesIO()
+    
+    if file_format == 'parquet':
+        df.to_parquet(
+            buffer, 
+            engine='pyarrow', 
+            compression='snappy',
+            index=False
+        )
+    elif file_format == 'csv':
+        df.to_csv(
+            buffer,
+            sep=',',
+            encoding='utf-8',
+            index=False,
+            date_format='%Y-%m-%d %H:%M:%S'
+        )
+    else:
+        raise ValueError(f"Formato não suportado: {file_format}. Use 'parquet' ou 'csv'.")
+    
+    buffer.seek(0)
     
     # Upload para Data Lake
     file_client = file_system_client.get_file_client(file_path)
-    file_client.upload_data(parquet_buffer.read(), overwrite=True)
+    file_client.upload_data(buffer.read(), overwrite=True)
     
-    file_size_kb = len(parquet_buffer.getvalue()) / 1024
-    print(f"   ✅ {len(df):,} rows ({file_size_kb:.2f} KB) -> {file_path}")
+    file_size_kb = len(buffer.getvalue()) / 1024
+    print(f"   ✅ {len(df):,} rows ({file_size_kb:.2f} KB) [{file_format.upper()}] -> {file_path}")
 
 
-def export_tickets_full(azure_tenants):
+def export_tickets_full(azure_tenants, file_format='parquet'):
     """Exporta TODOS os tickets (sem filtro de data) apenas para tenants com diretório no Azure.
     
     Args:
         azure_tenants (set): Conjunto de UUIDs de tenants com diretórios no Azure
+        file_format (str): Formato do arquivo ('parquet' ou 'csv')
     """
     print("\n" + "="*80)
-    print("📊 EXPORTANDO TICKETS (bi_tickets_flat) - TODOS OS DADOS")
+    print(f"📊 EXPORTANDO TICKETS (bi_tickets_flat) - TODOS OS DADOS - Formato: {file_format.upper()}")
     print("="*80)
     
     if not azure_tenants:
-        print("⚠️  Nenhum tenant com diretório no Azure - pulando exportação")
+        print("⚠️  Nenhuma tenant com diretório no Azure - pulando exportação")
         return
     
     conn = get_postgres_connection()
@@ -260,42 +281,47 @@ def export_tickets_full(azure_tenants):
     for idx, (tenant_id, group_df) in enumerate(df_filtered.groupby('tenant_id'), 1):
         file_path = (
             f"tenant_{tenant_id}/tickets/"
+            f"format={file_format}/"  # Particionamento por formato
             f"year={YEAR}/month={MONTH}/day={DAY}/"
-            f"tickets_full_{TIMESTAMP}.parquet"
+            f"tickets_full_{TIMESTAMP}.{file_format}"
         )
         
         print(f"[{idx}/{total_tenants}] Tenant {tenant_id}: {len(group_df):,} tickets")
-        upload_dataframe_to_datalake(group_df, file_path, service_client)
+        upload_dataframe_to_datalake(group_df, file_path, service_client, file_format)
     
     print(f"\n✅ TICKETS: {len(df_filtered):,} registros exportados para {total_tenants} tenants")
 
 
-def export_ticket_stages_full(azure_tenants):
-    """DEPRECATED - Views de stages foram removidas.
-    
-    Esta função foi mantida apenas para compatibilidade, mas não exporta mais dados.
-    """
-    print("\n⚠️  AVISO: export_ticket_stages_full() está DEPRECATED")
-    print("   As views bi_ticket_stages_flat e bi_devices_telemetry foram removidas.")
-    print("   Apenas bi_tickets_flat é exportada agora.\n")
-    return
-
-
-def export_telemetry_full(azure_tenants):
-    """DEPRECATED - Views de telemetry foram removidas.
-    
-    Esta função foi mantida apenas para compatibilidade, mas não exporta mais dados.
-    """
-    return
-
-
 def main():
     """Função principal - executa exportação completa de todas as tabelas."""
+    # Parser de argumentos CLI
+    parser = argparse.ArgumentParser(
+        description='Exportação inicial completa de dados para Azure Data Lake',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exemplos:
+  %(prog)s                      # Exportar como Parquet (padrão)
+  %(prog)s --format csv         # Exportar como CSV
+  %(prog)s --format parquet     # Exportar como Parquet explicitamente
+        """
+    )
+    parser.add_argument(
+        '--format',
+        type=str,
+        choices=['parquet', 'csv'],
+        default='parquet',
+        help='Formato de exportação: parquet (padrão, mais rápido) ou csv (compatível com Excel)'
+    )
+    
+    args = parser.parse_args()
+    file_format = args.format
+    
     print("\n" + "🚀"*40)
     print("EXPORTAÇÃO INICIAL COMPLETA PARA AZURE DATA LAKE")
     print("🚀"*40)
     print(f"\n📅 Data de execução: {NOW.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📁 Particionamento: year={YEAR}/month={MONTH}/day={DAY}/")
+    print(f"📦 Formato de exportação: {file_format.upper()}")
     print(f"\n⚠️  ATENÇÃO: Esta exportação inclui TODOS os dados históricos!")
     print("⚠️  Após esta execução, o DAG do Airflow manterá apenas dados incrementais.")
     print("\n📊 Views exportadas: bi_tickets_flat (simplificada - ~60% menos campos)\n")
@@ -308,15 +334,15 @@ def main():
         azure_tenants = get_tenants_with_folders()
         
         if not azure_tenants:
-            print("\n❌ Nenhum tenant com diretório no Azure Data Lake encontrado.")
+            print("\n❌ Nenhuma tenant com diretório no Azure Data Lake encontrada.")
             print("💡 Execute o script generate_azure_service_principals.py primeiro para criar os diretórios.")
             sys.exit(1)
         
         # Exportar tickets (apenas para tenants com diretório no Azure)
-        export_tickets_full(azure_tenants)
+        export_tickets_full(azure_tenants, file_format)
         
         print("\n" + "="*80)
-        print("✅ EXPORTAÇÃO COMPLETA FINALIZADA COM SUCESSO!")
+        print(f"✅ EXPORTAÇÃO COMPLETA FINALIZADA COM SUCESSO! (Formato: {file_format.upper()})")
         print("="*80)
         print("\n💡 Próximos passos:")
         print("   1. Verificar dados no Azure Portal")

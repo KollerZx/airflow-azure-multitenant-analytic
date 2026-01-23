@@ -249,7 +249,7 @@ python scripts/generate_azure_service_principals.py --ids \
 python scripts/generate_azure_service_principals.py --interactive
 
 # Você verá:
-# 1. Tenant A Trucks        |   1,234 tickets
+# 1. Tenant A         |   1,234 tickets
 # 2. Tenant B Parts        |     567 tickets
 # 3. Tenant C    |     890 tickets
 #
@@ -271,7 +271,7 @@ bash azure/create_service_principals_*.sh
 # Script cria automaticamente:
 # - Service Principal por tenant (sp-client-<tenant>-read)
 # - ACLs de leitura na pasta tenant_<uuid>/
-# - Arquivo de credenciais: azure_client_docs_*/empresa_access_guide.md
+# - Arquivo de credenciais: azure_client_docs_*/tenant_access_guide.md
 ```
 
 #### 4.3. Distribuir Credenciais aos Clientes
@@ -381,7 +381,7 @@ Navigator:
         
 ```
 
-**⚠️ IMPORTANTE:** Consulte o guia específico da tenant (`azure_client_docs_*/empresa_access_guide.md`) para:
+**⚠️ IMPORTANTE:** Consulte o guia específico da tenant (`azure_client_docs_*/tenant_access_guide.md`) para:
 
 - URLs exatas por tipo de dado
 - Scripts Power Query para combinar Parquet

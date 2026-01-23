@@ -1,12 +1,14 @@
-# Scripts de Automação Multi-Tenant
+# Scripts de Automação e Configuração
 
-Esta pasta contém scripts para automatizar a configuração de Service Principals e ACLs no Azure Data Lake para isolamento multi-tenant.
+Esta pasta contém scripts para automatizar a configuração do projeto, incluindo Service Principals Azure, ACLs, e lifecycle policies.
 
 ---
 
 ## 📜 Scripts Disponíveis
 
-### 1. `generate_azure_service_principals.py` - Geração Automatizada
+### 1. Scripts Azure Multi-Tenant
+
+#### `generate_azure_service_principals.py` - Geração Automatizada
 
 Gera Service Principals do Azure e configura ACLs no Data Lake para tenants selecionadas.
 
@@ -18,7 +20,7 @@ pip install psycopg2-binary python-dotenv
 
 #### Como Usar
 
-**Modo 1: Todas os tenants**
+**Modo 1: Todas as tenants**
 
 ```bash
 python scripts/generate_azure_service_principals.py
@@ -30,18 +32,18 @@ python scripts/generate_azure_service_principals.py
 
 # Busca parcial, case-insensitive
 
-python scripts/generate_azure_service_principals.py --tenants "Tenant A" "Tenant B"
+python scripts/generate_azure_service_principals.py --tenants "Empresa A" "Empresa B"
 
 # Atalho
 
-python scripts/generate_azure_service_principals.py -t "Tenant A"
+python scripts/generate_azure_service_principals.py -c "Empresa A"
 ```
 
 **Modo 3: Tenants específicas por ID**
 
 ```bash
 python scripts/generate_azure_service_principals.py --ids \
-  "4ed977b6-51dd-59f8-acb6-0908a57cc1b7" \
+  "b33d33da-def7-5132-a75b-a2bad300743d" \
   "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 ```
 
@@ -54,11 +56,11 @@ python scripts/generate_azure_service_principals.py --interactive
 
 # Tenants disponíveis
 
-# 1. Tenant A Trucks        |   1,234 tickets
+# 1. Empresa A   Trucks      |   1,234 tickets
 
-# 2. Tenant B Parts        |     567 tickets
+# 2. Empresa B Parts        |     567 tickets
 
-# 3. Tenant C    |     890 tickets
+# 3. Empresa C Service    |     890 tickets
 
 #
 
@@ -76,7 +78,7 @@ python scripts/generate_azure_service_principals.py --interactive
    - Obter Object ID do Service Principal
    - Chamar `setup_azure_acls.sh` para configurar ACLs
 3. ✅ Gera documentação individual para cada cliente
-4. ✅ Salva credenciais em arquivo seguro (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)
+4. ✅ Salva credenciais em arquivo seguro (CLIENT_ID, CLIENT_SECRET, TENANT_ID)
 
 #### Outputs Gerados
 
@@ -85,8 +87,8 @@ azure/
   └── create_service_principals_YYYYMMDD_HHMMSS.sh  # Script executável
 
 azure_client_docs_YYYYMMDD_HHMMSS/
-  ├── empresaA-trucks_access_guide.md     # Documentação Tenant A
-  ├── empresaB-parts_access_guide.md     # Documentação Tenant B
+  ├── empresaA-trucks_access_guide.md     # Documentação Empresa A
+  ├── empresaB-parts_access_guide.md     # Documentação Empresa B
   └── ...
 
 azure_credentials_YYYYMMDD_HHMMSS.txt  # Credenciais (GUARDAR SEGURO!)
@@ -94,13 +96,13 @@ azure_credentials_YYYYMMDD_HHMMSS.txt  # Credenciais (GUARDAR SEGURO!)
 
 #### Exemplos Práticos
 
-**Adicionar novo tenant:**
+**Adicionar nova tenant:**
 
 ```bash
 
 # Nova tenant cadastrada no sistema
 
-python scripts/generate_azure_service_principals.py -t "Novo Tenant"
+python scripts/generate_azure_service_principals.py -c "Nova Tenant"
 
 # Executar script gerado
 
@@ -119,19 +121,19 @@ python scripts/generate_azure_service_principals.py -I
 
 ```
 
-**Re-gerar para tenant específico:**
+**Re-gerar para tenant específica:**
 
 ```bash
 
 # Por ID (mais seguro que por nome)
 
 python scripts/generate_azure_service_principals.py --ids \
-  "4ed977b6-51dd-59f8-acb6-0908a57cc1b7"
+  "b33d33da-def7-5132-a75b-a2bad300743d"
 ```
 
 #### Troubleshooting
 
-**Erro: "Nenhum tenant encontrado"**
+**Erro: "Nenhuma tenant encontrada"**
 
 - Verifique se o filtro está correto (busca é case-insensitive e parcial)
 - Use `--interactive` para ver todas as tenants disponíveis
@@ -147,7 +149,7 @@ cat .env | grep AZURE
 
 # Adicionar se necessário
 
-echo "AZURE_STORAGE_ACCOUNT_NAME=ticketsdatalake" >> .env
+echo "AZURE_STORAGE_ACCOUNT_NAME=stticketsdatalake" >> .env
 echo "AZURE_CONTAINER_NAME=tickets-data" >> .env
 ```
 
@@ -165,7 +167,7 @@ Configura ACLs (Access Control Lists) no Azure Data Lake Storage Gen2 para isola
 
 #### Como Usar
 
-**Modo 1: Interativo (um tenant por vez)**
+**Modo 1: Interativo (uma tenant por vez)**
 
 ```bash
 ./scripts/setup_azure_acls.sh
@@ -177,15 +179,16 @@ Configura ACLs (Access Control Lists) no Azure Data Lake Storage Gen2 para isola
 # - Service Principal Object ID
 
 # - Nome do Tenant (opcional)
+
 ```
 
 **Modo 2: Argumentos diretos**
 
 ```bash
 ./scripts/setup_azure_acls.sh \
-  "4ed977b6-51dd-59f8-acb6-0908a57cc1b7" \
+  "b33d33da-def7-5132-a75b-a2bad300743d" \
   "eba1770b-0826-4d5f-b7db-68fdb47a8ded" \
-  "Tenant A Trucks"
+  "Empresa A "
 ```
 
 **Modo 3: Batch (múltiplas tenants via CSV)**
@@ -196,8 +199,8 @@ Configura ACLs (Access Control Lists) no Azure Data Lake Storage Gen2 para isola
 
 cat > tenants_acls.csv << EOF
 tenant_id,object_id,tenant_name
-4ed977b6-51dd-59f8-acb6-0908a57cc1b7,eba1770b-0826-4d5f-b7db-68fdb47a8ded,Tenant A Trucks
-a1b2c3d4-e5f6-7890-abcd-ef1234567890,obj-id-2,Tenant B Parts
+b33d33da-def7-5132-a75b-a2bad300743d,eba1770b-0826-4d5f-b7db-68fdb47a8ded,Empresa A 
+a1b2c3d4-e5f6-7890-abcd-ef1234567890,obj-id-2,Empresa B Parts
 EOF
 
 # Executar
@@ -227,7 +230,7 @@ az account set --subscription "<SUBSCRIPTION_ID>"
 1. **Variáveis no `.env`:**
 
 ```bash
-AZURE_STORAGE_ACCOUNT_NAME=ticketsdatalake
+AZURE_STORAGE_ACCOUNT_NAME=stticketsdatalake
 AZURE_CONTAINER_NAME=tickets-data
 ```
 
@@ -253,7 +256,7 @@ AZURE_CONTAINER_NAME=tickets-data
 Azure Data Lake ACL Setup - Multi-tenant
 ==================================================
 
-Storage Account: ticketsdatalake
+Storage Account: stticketsdatalake
 Container: tickets-data
 ==================================================
 
@@ -264,9 +267,9 @@ Usuário: <admin@tenant.com>
 ✅ HNS habilitado
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📁 Tenant: Tenant A Trucks
-   Tenant ID: 4ed977b6-51dd-59f8-acb6-0908a57cc1b7
-   Pasta: tenant_4ed977b6-51dd-59f8-acb6-0908a57cc1b7
+📁 Tenant: Empresa A 
+   Tenant ID: b33d33da-def7-5132-a75b-a2bad300743d
+   Pasta: tenant_b33d33da-def7-5132-a75b-a2bad300743d
    Service Principal Object ID: eba1770b-0826-4d5f-b7db-68fdb47a8ded
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -287,7 +290,7 @@ Successfully processed 10 director(ies)
 🔑 Configurando permissão no diretório raiz (--x)...
 ✅ Permissão --x adicionada no diretório raiz
 
-✅ ACLs configuradas para Tenant A Trucks
+✅ ACLs configuradas para Empresa A 
 ```
 
 #### Troubleshooting
@@ -317,6 +320,49 @@ az role assignment create \
 
 ---
 
+### 3. `create_isolated_storage_accounts.sh` - Storage Accounts Separados (Opcional)
+
+**Nota**: Este script implementa isolamento via Storage Accounts separados (não é a estratégia principal).
+
+#### Quando Usar
+
+Use este script apenas se um cliente **exigir isolamento físico absoluto**:
+
+- Requisitos rigorosos de compliance (HIPAA, LGPD nível máximo)
+- Dados altamente sensíveis
+- Exigências contratuais específicas de auditoria
+
+#### Como Funciona
+
+Cria um Storage Account dedicado por tenant:
+
+- `sttickets-empresaA`
+- `sttickets-empresaB`
+- `sttickets-cliente3`
+
+O Service Principal tem acesso **apenas ao seu próprio Storage Account**, impossibilitando acesso a dados de outras tenants.
+
+#### Uso
+
+```bash
+
+# Simular (dry-run)
+
+bash scripts/create_isolated_storage_accounts.sh --dry-run
+
+# Executar
+
+bash scripts/create_isolated_storage_accounts.sh
+
+# Tenant específica
+
+bash scripts/create_isolated_storage_accounts.sh <TENANT_ID>
+```
+
+Veja [MULTI_TENANT_ISOLATION_LIMITATIONS.md](../MULTI_TENANT_ISOLATION_LIMITATIONS.md) para comparação detalhada entre as estratégias.
+
+---
+
 ## 🔐 Fluxo de Trabalho Completo
 
 ### Nova Tenant no Sistema
@@ -327,7 +373,7 @@ az role assignment create \
 
 # 2. Gerar Service Principal + ACLs
 
-python scripts/generate_azure_service_principals.py -t "Novo Tenant"
+python scripts/generate_azure_service_principals.py -c "Nova Tenant"
 
 # 3. Executar script gerado
 
@@ -335,7 +381,7 @@ bash azure/create_service_principals_*.sh
 
 # 4. Distribuir credenciais
 
-# Enviar arquivo azure_client_docs_*/nova-empresa_access_guide.md por canal seguro
+# Enviar arquivo azure_client_docs_*/nova-tenant_access_guide.md por canal seguro
 
 # 5. DAG do Airflow detecta automaticamente e começa a exportar dados
 
@@ -348,21 +394,68 @@ bash azure/create_service_principals_*.sh
 # Testar acesso da Tenant A à sua pasta (deve funcionar)
 
 az storage fs file list \
-  --account-name ticketsdatalake \
+  --account-name stticketsdatalake \
   --file-system tickets-data \
-  --path "tenant_<UUID_TENANT_A>/" \
+  --path "tenant_<UUID_EMPRESA_A>/" \
   --auth-mode login \
-  --account-key <CLIENT_SECRET_TENANT_A>
+  --account-key <CLIENT_SECRET_EMPRESA_A>
 
 # Testar acesso da Tenant A à pasta da Tenant B (deve falhar com 403)
 
 az storage fs file list \
-  --account-name ticketsdatalake \
+  --account-name stticketsdatalake \
   --file-system tickets-data \
-  --path "tenant_<UUID_TENANT_B>/" \
+  --path "tenant_<UUID_EMPRESA_B>/" \
   --auth-mode login \
-  --account-key <CLIENT_SECRET_TENANT_A>
+  --account-key <CLIENT_SECRET_EMPRESA_A>
 ```
+
+Veja guia completo: [TESTE_ISOLAMENTO.md](../TESTE_ISOLAMENTO.md)
+
+---
+
+### 2. Scripts de Lifecycle Management (Azure Storage)
+
+#### `lifecycle-policy.json` - Política de Retenção
+
+Configuração de lifecycle management para otimizar custos do Azure Storage:
+
+- **Hot Tier** (0-30 dias): Dados recentes
+- **Cool Tier** (30-90 dias): Dados intermediários  
+- **Archive Tier** (90-730 dias): Dados antigos
+- **Delete** (> 730 dias): Remoção automática após 2 anos
+
+**Personalizar política:**
+
+```bash
+# Editar períodos conforme necessidade
+vim scripts/lifecycle-policy.json
+
+# Após editar, reaplicar
+./scripts/apply_lifecycle_policy.sh
+```
+
+#### `apply_lifecycle_policy.sh` - Aplicar Lifecycle Policy
+
+Aplica a política de lifecycle no Azure Storage Account.
+
+**Pré-requisitos:**
+
+- Azure CLI instalado e autenticado (`az login`)
+- Variáveis de ambiente configuradas (`.env`)
+- Permissão de Contributor no Storage Account
+
+**Como usar:**
+
+```bash
+# Tornar executável (primeira vez)
+chmod +x scripts/apply_lifecycle_policy.sh
+
+# Executar
+./scripts/apply_lifecycle_policy.sh
+```
+
+**Economia estimada:** ~77% nos custos após 90 dias (Hot → Archive)
 
 ---
 

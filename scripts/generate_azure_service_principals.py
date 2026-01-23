@@ -3,19 +3,19 @@
 Script para gerar Service Principals do Azure por tenant.
 
 Este script:
-1. Conecta ao PostgreSQL para listar todas os tenants (tenant_id)
+1. Conecta ao PostgreSQL para listar todas as tenants (tenant_id)
 2. Gera comandos Azure CLI para criar Service Principals por tenant
 3. Configura ACLs POSIX para isolamento (SEM RBAC no Storage Account)
 4. Gera documentação de conexão para cada cliente
 
 Uso:
-    # Todos os tenants
+    # Todas as tenants
     python scripts/generate_azure_service_principals.py
     
-    # Tenants específicos por nome (case-insensitive, busca parcial)
-    python scripts/generate_azure_service_principals.py --tenants "Tenant A" "Tenant B"
+    # Tenants específicas por nome (case-insensitive, busca parcial)
+    python scripts/generate_azure_service_principals.py --tenants "Empresa X" "Tenant X"
     
-    # Tenants específicos por ID
+    # Tenants específicas por ID
     python scripts/generate_azure_service_principals.py --ids "8c1dca21-ba17-5018-b56d-cf6395d413e5"
     
     # Interativo: escolher da lista
@@ -27,8 +27,6 @@ Requisitos:
     - psycopg2-binary
     - Variáveis de ambiente configuradas (.env)
 
-Autor: Airflow Team
-Data: 2026-01-15
 """
 
 import os
@@ -77,11 +75,11 @@ def get_tenants(filter_names=None, filter_ids=None):
         
         query = f"""
             SELECT DISTINCT
-                tn.id as tenant_id,
-                tn.name as tenant_name,
+                c.id as tenant_id,
+                c.name as tenant_name,
                 COUNT(t.id) as ticket_count
-            FROM {POSTGRES_SCHEMA}.tenants tn
-            LEFT JOIN {POSTGRES_SCHEMA}.tickets t ON tn.id = t.tenant_id
+            FROM {POSTGRES_SCHEMA}.tenants c
+            LEFT JOIN {POSTGRES_SCHEMA}.tickets t ON c.id = t.tenant_id
         """
         
         conditions = []
@@ -91,21 +89,21 @@ def get_tenants(filter_names=None, filter_ids=None):
         if filter_names:
             name_conditions = []
             for name in filter_names:
-                name_conditions.append("LOWER(tn.name) LIKE LOWER(%s)")
+                name_conditions.append("LOWER(c.name) LIKE LOWER(%s)")
                 params.append(f"%{name}%")
             conditions.append(f"({' OR '.join(name_conditions)})")
         
         # Filtro por IDs (busca exata)
         if filter_ids:
             placeholders = ','.join(['%s'] * len(filter_ids))
-            conditions.append(f"tn.id IN ({placeholders})")
+            conditions.append(f"c.id IN ({placeholders})")
             params.extend(filter_ids)
         
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         
         query += """
-            GROUP BY tn.id, tn.name
+            GROUP BY c.id, c.name
             ORDER BY ticket_count DESC
         """
         
@@ -124,10 +122,10 @@ def get_tenants(filter_names=None, filter_ids=None):
 
 def sanitize_sp_name(tenant_name):
     """
-    Sanitiza nome do tenant para usar em Service Principal.
+    Sanitiza nome da tenant para usar em Service Principal.
     
     Args:
-        tenant_name (str): Nome do tenant
+        tenant_name (str): Nome da tenant
     
     Returns:
         str: Nome sanitizado (minúsculas, sem espaços, apenas alfanumérico)
@@ -162,7 +160,7 @@ def generate_azure_cli_scripts(tenants):
 # 2. Login realizado: az login
 # 3. Subscription configurado: az account set --subscription <ID>
 #
-# IMPORTANTE: Salve os outputs (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) em um local seguro!
+# IMPORTANTE: Salve os outputs (CLIENT_ID, CLIENT_SECRET) em um local seguro!
 
 set -e  # Parar em caso de erro
 
@@ -237,12 +235,12 @@ if [ -z "$EXISTING_SP" ] || [ "$EXISTING_SP" == "null" ]; then
     
     # Extrair credenciais
     APP_ID=$(echo $SP_OUTPUT | jq -r '.appId')
-    AZURE_TENANT_ID=$(echo $SP_OUTPUT | jq -r '.tenant // .tenantId')
+    TENANT_ID=$(echo $SP_OUTPUT | jq -r '.tenant // .tenantId')
     PASSWORD=$(echo $SP_OUTPUT | jq -r '.password')
     
     echo "  ✅ Service Principal criado com sucesso"
     echo "     App ID: $APP_ID"
-    echo "     Tenant ID: $AZURE_TENANT_ID"
+    echo "     Tenant ID: $TENANT_ID"
     echo "     ⚠️  Client Secret só é exibido uma vez! Guardar: $PASSWORD"
     
     # Aguardar propagação do AD (crítico para novos SPs)
@@ -253,11 +251,11 @@ else
     
     # Extrair informações do SP existente
     APP_ID=$(echo $EXISTING_SP | jq -r '.appId')
-    AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)
+    TENANT_ID=$(az account show --query tenantId -o tsv)
     PASSWORD="***EXISTENTE_NAO_RECUPERAVEL***"
     
     echo "     App ID: $APP_ID"
-    echo "     Tenant ID: $AZURE_TENANT_ID"
+    echo "     Tenant ID: $TENANT_ID"
     echo "     ⚠️  Client Secret não pode ser recuperado (já foi criado anteriormente)"
     echo "     💡 Se perdeu o secret, delete o SP e execute novamente"
 fi
@@ -335,7 +333,7 @@ else
     fi
 fi
 
-echo "✅ Tenant {tenant_name} processado com sucesso"
+echo "✅ Tenant {tenant_name} processada com sucesso"
 echo ""
 
 # Salvar credenciais no arquivo
@@ -351,9 +349,9 @@ Service Principal: {sp_full_name}
 Pasta no Data Lake: {tenant_folder}
 
 # Credenciais (GUARDAR EM LOCAL SEGURO!)
-AZURE_TENANT_ID=$AZURE_TENANT_ID
-AZURE_CLIENT_ID=$APP_ID
-AZURE_CLIENT_SECRET=$PASSWORD
+TENANT_ID=$TENANT_ID
+CLIENT_ID=$APP_ID
+CLIENT_SECRET=$PASSWORD
 
 # URL de acesso
 Data Lake URL: https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/
@@ -401,7 +399,7 @@ def generate_client_documentation(tenants):
         
         doc_content = f"""# Acesso aos Dados - {tenant_name}
 
-## 📋 Informações do Tenant
+## 📋 Informações da Tenant
 
 - **Nome:** {tenant_name}
 - **Tenant ID:** `{tenant_id}`
@@ -427,22 +425,40 @@ Seus dados estão organizados da seguinte forma:
 ```
 {CONTAINER}/
 └── {tenant_folder}/
-    ├── tickets/
-    │   └── year=2026/month=01/day=14/*.parquet
+    └── tickets/
+        ├── format=parquet/
+        │   └── year=2026/month=01/day=22/*.parquet
+        └── format=csv/
+            └── year=2026/month=01/day=22/*.csv
 ```
 
 ## 🔗 URLs de Acesso Direto
 
-**IMPORTANTE para Power BI Service (app.powerbi.com):** Use as URLs específicas abaixo, apontando diretamente para cada tipo de dado:
+**IMPORTANTE:** A estrutura agora inclui particionamento por formato. Escolha a URL correta baseada na ferramenta:
 
-### 📊 Tickets (Chamados)
+### 📊 Tickets - Formato Parquet (Power BI, Python, Tableau)
 ```
-https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/
-```
-
+https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/
 ```
 
-> ⚠️ **Nota:** A URL raiz (`{tenant_folder}/`) contém apenas subdiretórios. Você deve apontar diretamente para a pasta específica do tipo de dado desejado.
+### 📊 Tickets - Formato CSV (Excel, editores de texto)
+```
+https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=csv/
+```
+
+### 💡 Qual formato usar?
+
+| Ferramenta | Formato Recomendado | Motivo |
+|------------|---------------------|--------|
+| Power BI | **Parquet** | 10-15x mais rápido, menor tamanho, tipos de dados preservados |
+| Excel | **CSV** | Abre diretamente, sem necessidade de Power Query |
+| Python/Pandas | **Parquet** | Melhor performance, compressão, suporte nativo |
+| Tableau | **Parquet** | Otimizado para análise, leitura mais rápida |
+| Editores de Texto | **CSV** | Legível por humanos, fácil visualização |
+
+```
+
+> ⚠️ **Nota:** Sempre use URLs específicas com o formato (`/format=parquet/` ou `/format=csv/`). Não use URLs genéricas como `{tenant_folder}/tickets/` sem especificar o formato.
 
 ## 🔗 Como Consumir os Dados
 
@@ -461,8 +477,9 @@ https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/ticke
 
 1. Acesse **app.powerbi.com**
 2. Vá em **Get Data** → **Azure Data Lake Storage Gen2**
-3. **Use URL específica** (não use a pasta raiz `{tenant_folder}/`):
-   - ✅ **Correto:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/`
+3. **Use URL específica do formato Parquet** (não use a pasta raiz):
+   - ✅ **Correto:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/`
+   - ❌ **Incorreto:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/`
    - ❌ **Incorreto:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/`
 4. Configure credenciais:
    - Authentication: **Service Principal**
@@ -484,11 +501,11 @@ No Navigator:
 
 Clique em **"Transform Data"** e cole um dos scripts abaixo no Power Query Editor:
 
-**Script 1: Simples (Recomendado)**
+**Script 1: Simples (Recomendado) - Apenas Parquet**
 
 ```powerquery
 let
-    Source = AzureStorage.DataLake("https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/"),
+    Source = AzureStorage.DataLake("https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/"),
     
     // Filtrar apenas arquivos .parquet (não pastas)
     FilterFiles = Table.SelectRows(Source, each [Extension] = ".parquet"),
@@ -509,11 +526,11 @@ in
     Result
 ```
 
-**Script 2: Com Tratamento de Pastas Vazias**
+**Script 2: Com Tratamento de Pastas Vazias - Apenas Parquet**
 
 ```powerquery
 let
-    Source = AzureStorage.DataLake("https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/"),
+    Source = AzureStorage.DataLake("https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/"),
     
     // Navegar recursivamente em todas as subpastas
     KeepAllRows = Table.SelectRows(Source, each true),
@@ -538,11 +555,11 @@ in
     CombineParquet
 ```
 
-**Script 3: Usando Table.SelectRows Avançado**
+**Script 3: Usando Table.SelectRows Avançado - Apenas Parquet**
 
 ```powerquery
 let
-    Source = AzureStorage.DataLake("https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/"),
+    Source = AzureStorage.DataLake("https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/"),
     
     // Filtrar apenas arquivos que terminam com .parquet
     FilteredFiles = Table.SelectRows(Source, each Text.EndsWith([Name], ".parquet")),
@@ -563,13 +580,19 @@ in
 - `{CONTAINER}` pelo container: `{CONTAINER}`
 - `{tenant_folder}` pela sua pasta: `{tenant_folder}`
 
-**Passo 3: Criar Múltiplas Conexões (se necessário)**
+**Passo 3: Criar Múltiplas Conexões por Formato (se necessário)**
 
-Para acessar múltiplos tipos de dados, crie conexões separadas:
+Para acessar múltiplos formatos, crie conexões separadas:
 
-1. **Tickets:**
-   - URL: `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/`
-   - Nome da Query: `Tickets`
+1. **Tickets Parquet (Power BI):**
+   - URL: `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/`
+   - Nome da Query: `Tickets_Parquet`
+
+2. **Tickets CSV (Excel/backup):**
+   - URL: `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=csv/`
+   - Nome da Query: `Tickets_CSV`
+
+> 💡 **Recomendação:** Use apenas Parquet para Power BI (melhor performance). CSV é mais adequado para Excel.
 
 **Passo 4: Exportar para Power BI Desktop (Opcional)**
 
@@ -591,12 +614,12 @@ import pandas as pd
 from io import BytesIO
 
 # Suas credenciais
-AZURE_TENANT_ID = "<fornecido>"
-AZURE_CLIENT_ID = "<fornecido>"
-AZURE_CLIENT_SECRET = "<fornecido>"
+TENANT_ID = "<fornecido>"
+CLIENT_ID = "<fornecido>"
+CLIENT_SECRET = "<fornecido>"
 
 # Autenticação
-credential = ClientSecretCredential(AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)
+credential = ClientSecretCredential(TENANT_ID, CLIENT_ID, CLIENT_SECRET)
 account_url = "https://{STORAGE_ACCOUNT}.dfs.core.windows.net"
 service_client = DataLakeServiceClient(account_url=account_url, credential=credential)
 file_system_client = service_client.get_file_system_client("{CONTAINER}")
@@ -611,7 +634,7 @@ for path in paths:
         print(f"  - {{path.name.split('/')[-1]}}/")
 
 # Exemplo 2: Ler um arquivo Parquet específico
-file_path = "{tenant_folder}/tickets/year=2026/month=01/day=14/tickets_20260114_103000.parquet"
+file_path = "{tenant_folder}/tickets/format=parquet/year=2026/month=01/day=22/tickets_20260122_150000.parquet"
 file_client = file_system_client.get_file_client(file_path)
 download = file_client.download_file()
 df = pd.read_parquet(BytesIO(download.readall()))
@@ -620,7 +643,7 @@ print(f"\nTotal de tickets: {{len(df)}}")
 print(df.head())
 
 # Exemplo 3: Ler todos os Parquets de uma pasta (combinar)
-tickets_path = "{tenant_folder}/tickets"
+tickets_path = "{tenant_folder}/tickets/format=parquet"
 dir_client = file_system_client.get_directory_client(tickets_path)
 all_files = [p for p in dir_client.get_paths(recursive=True) if p.name.endswith('.parquet')]
 
@@ -635,12 +658,37 @@ df_combined = pd.concat(dataframes, ignore_index=True)
 print(f"\nTotal combinado: {{len(df_combined)}} registros")
 ```
 
-### Opção 3: Excel (Power Query)
+### Opção 3: Excel com CSV (Recomendado para Excel)
+
+**Por que CSV para Excel?**
+- Abre diretamente (duplo clique)
+- Não precisa de Power Query
+- Mais simples para usuários não-técnicos
+
+**Passo 1: Baixar arquivo CSV**
+
+Use Azure Storage Explorer ou Azure Portal para baixar arquivos `.csv` de:
+```
+{tenant_folder}/tickets/format=csv/year=YYYY/month=MM/day=DD/
+```
+
+**Passo 2: Abrir no Excel**
+
+1. Localize o arquivo `.csv` baixado
+2. Duplo clique - abre automaticamente no Excel
+3. Se delimitador estiver incorreto:
+   - Vá em **Dados** → **Texto para Colunas**
+   - Escolha delimitador: vírgula (`,`)
+
+### Opção 4: Excel com Parquet (Power Query)
+
+Se preferir Parquet (arquivos menores):
 
 1. Abra o Excel
 2. Vá em **Dados** → **Obter Dados** → **Do Azure** → **Azure Data Lake Storage Gen2**
-3. Insira credenciais conforme fornecido
-4. Selecione os arquivos Parquet desejados
+3. URL: `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/`
+4. Insira credenciais conforme fornecido
+5. Selecione os arquivos Parquet desejados
 5. Transforme e carregue os dados
 
 ### Opção 4: Tableau
@@ -654,7 +702,7 @@ print(f"\nTotal combinado: {{len(df_combined)}} registros")
 ## 🔒 Segurança
 
 - ✅ Suas credenciais dão acesso SOMENTE à pasta `{tenant_folder}/`
-- ✅ Você NÃO consegue ver dados de outros tenants
+- ✅ Você NÃO consegue ver dados de outras tenants
 - ✅ Todos os acessos são auditados e logados
 - ❌ NUNCA compartilhe suas credenciais com terceiros
 
@@ -673,9 +721,11 @@ print(f"\nTotal combinado: {{len(df_combined)}} registros")
 
 A: Este erro tem duas causas principais:
 
-1. **URL incorreta:** Você está apontando para a pasta raiz (`{tenant_folder}/`). Use URLs específicas:
-   - ✅ `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/`
-   - ❌ `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/`
+1. **URL incorreta:** Você precisa especificar o formato. Use URLs específicas:
+   - ✅ **Parquet:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=parquet/`
+   - ✅ **CSV:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/format=csv/`
+   - ❌ **Incorreto:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/tickets/`
+   - ❌ **Incorreto:** `https://{STORAGE_ACCOUNT}.dfs.core.windows.net/{CONTAINER}/{tenant_folder}/`
 
 2. **Arquivos não combinados:** A estrutura é importada mas sem dados. Solução:
    - Use o botão **"Combine"** no Navigator, OU
@@ -699,29 +749,31 @@ A: Isso é esperado! Suas credenciais usam **ACLs sem RBAC** para segurança. O 
 **Q: Power BI Service não lista arquivos ou mostra "tabela vazia"**
 
 A: Certifique-se de:
-1. Usar URL da **subpasta específica** (`.../tickets/`) não a raiz
+1. Usar URL com **formato específico** (`/format=parquet/` ou `/format=csv/`) não a pasta genérica `/tickets/`
 2. Ter configurado as credenciais do Service Principal corretamente
 3. Usar botão "Combine" OU um dos scripts Power Query fornecidos
 
-**Q: Preciso acessar múltiplos tipos de dados (tickets + telemetria)?**
+**Q: Preciso acessar múltiplos formatos (Parquet + CSV)?**
 
-A: Crie **múltiplas conexões** no Power BI, uma para cada tipo:
-- Conexão 1: `.../{tenant_folder}/tickets/`
-- Conexão 2: `.../{tenant_folder}/telemetry/` (Se disponível)
-- Depois relacione as tabelas usando campos comuns (ticket_id, tenant_id, etc.)
+A: Crie **múltiplas conexões** no Power BI, uma para cada formato:
+- Conexão 1 (Parquet): `.../{tenant_folder}/tickets/format=parquet/`
+- Conexão 2 (CSV): `.../{tenant_folder}/tickets/format=csv/`
 
-**Q: Como sei quais pastas estão disponíveis?**
+> 💡 **Dica:** Geralmente você precisa apenas de **um formato**. Use Parquet para Power BI (mais rápido).
+
+**Q: Como sei quais formatos estão disponíveis para minha tenant?**
 
 A: Duas opções:
 1. Use o script Python (Exemplo 1) para listar programaticamente
-2. As pastas padrão são: `tickets/`
+2. Por padrão, todos os clientes têm: `tickets/format=parquet/`
+3. Se CSV foi habilitado para sua tenant, você também terá: `tickets/format=csv/`
 
 ### 📞 Contato para Suporte
 
 Se os problemas persistirem:
 
 1. ✅ Verifique se as credenciais estão corretas
-2. ✅ Confirme que está usando a URL da **subpasta** (não a raiz `{tenant_folder}/`)
+2. ✅ Confirme que está usando a URL com **formato específico** (`/format=parquet/` ou `/format=csv/`)
 3. ✅ Teste a conexão usando **Power BI Service** ou Python
 4. 📧 Entre em contato com o suporte técnico informando:
    - URL exata que está tentando acessar
@@ -749,13 +801,13 @@ def interactive_select_tenants(all_tenants):
     Permite seleção interativa de tenants.
     
     Args:
-        all_tenants (list): Lista de todos os tenants disponíveis
+        all_tenants (list): Lista de todas as tenants disponíveis
     
     Returns:
-        list: Lista de tenants selecionados
+        list: Lista de tenants selecionadas
     """
     print("\n" + "=" * 80)
-    print("MODO INTERATIVO - Selecione os tenants")
+    print("MODO INTERATIVO - Selecione as tenants")
     print("=" * 80)
     print("\nTenants disponíveis:")
     print("-" * 80)
@@ -772,7 +824,7 @@ def interactive_select_tenants(all_tenants):
     print("  • Cancelar: q ou quit\n")
     
     while True:
-        selection = input("Selecione os tenants: ").strip().lower()
+        selection = input("Selecione as tenants: ").strip().lower()
         
         if selection in ['q', 'quit', 'exit']:
             print("❌ Operação cancelada")
@@ -798,7 +850,7 @@ def interactive_select_tenants(all_tenants):
                 print(f"❌ Erro: números devem estar entre 1 e {len(all_tenants)}")
                 continue
             
-            # Retornar tenants selecionados
+            # Retornar tenants selecionadas
             selected = [all_tenants[i-1] for i in sorted(selected_indices)]
             
             print(f"\n✅ {len(selected)} tenant(s) selecionada(s):")
@@ -825,23 +877,24 @@ def parse_arguments():
         description='Gera Service Principals do Azure por tenant',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-            Exemplos de uso:
+Exemplos de uso:
 
-            # Todos os tenants
-            python scripts/generate_azure_service_principals.py
-            
-            # Tenants específicos por nome (busca parcial)
-            python scripts/generate_azure_service_principals.py --tenants "Tenant A" "Tenant B"
-            
-            # Tenants específicos por ID
+  # Todas as tenants
+  python scripts/generate_azure_service_principals.py
 
-            # Modo interativo (escolher da lista)
-            python scripts/generate_azure_service_principals.py --interactive
+  # Tenants específicas por nome (busca parcial)
+  python scripts/generate_azure_service_principals.py --tenants "Empresa X" "Tenant X"
+
+  # Tenants específicas por ID
+  python scripts/generate_azure_service_principals.py --ids "8c1dca21-ba17-5018-b56d-cf6395d413e5"
+
+  # Modo interativo (escolher da lista)
+  python scripts/generate_azure_service_principals.py --interactive
         """
     )
     
     parser.add_argument(
-        '--tenants', '-t',
+        '--tenants', '-c',
         nargs='+',
         metavar='NOME',
         help='Filtrar tenants por nome (busca parcial, case-insensitive)'
@@ -864,6 +917,10 @@ def parse_arguments():
 
 
 def main():
+    # Parse argumentos
+    args = parse_arguments()
+    
+    print("=" * 80)
     # Parse argumentos
     args = parse_arguments()
     

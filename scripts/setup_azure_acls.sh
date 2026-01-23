@@ -20,9 +20,7 @@
 #   - Azure CLI instalado e autenticado (az login)
 #   - Variáveis de ambiente configuradas
 #   - Permissões: Storage Blob Data Owner (para configurar ACLs)
-#
-# Autor: Airflow Team
-# Data: 2026-01-16
+
 
 set -e  # Parar em caso de erro
 

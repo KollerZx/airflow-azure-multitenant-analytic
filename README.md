@@ -1,6 +1,6 @@
 # 🚀 Pipeline Airflow → PostgreSQL → Azure Data Lake (Multi-Tenant)
 
-Pipeline ETL automatizado para exportação de dados genéricos para Azure Data Lake Storage Gen2, com **isolamento físico por tenant** (tenant_id). Inicialmente configurado para chamados (tickets), mas generalizável para outros tipos de dados.
+Pipeline ETL automatizado para exportação de dados de chamados (tickets) para Azure Data Lake Storage Gen2, com **isolamento físico por tenant** (tenant_id).
 
 [![Airflow](https://img.shields.io/badge/Airflow-2.8.1-blue)](https://airflow.apache.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12%2B-blue)](https://www.postgresql.org/)
@@ -10,21 +10,12 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 
 ## 📋 O Que Este Projeto Faz?
 
-✅ **Extrai** dados do PostgreSQL via views materializadas configuráveis  
-✅ **Transforma** em formato Parquet otimizado para analytics  
+✅ **Extrai** dados de chamados (tickets) do PostgreSQL via views materializadas  
+✅ **Transforma** em múltiplos formatos (Parquet + CSV) otimizados  
 ✅ **Exporta** para Azure Data Lake Gen2 a cada 15 minutos via Airflow  
 ✅ **Isola** dados por tenant com pastas físicas separadas (tenant_id)  
 ✅ **Distribui** acesso via Service Principals dedicados por cliente  
 ✅ **Permite** consumo self-service (Power BI, Tableau, Python, Excel, Synapse)  
-
-### Benefícios
-
-- 🔒 **Segurança:** Isolamento físico - tenant X não vê dados de tenant Y
-- 💰 **Custo:** ~USD 30/mês vs USD 500/mês (Power BI Pro) ou USD 5.000/mês (Premium)
-- 🎯 **Self-Service:** Clientes escolhem suas próprias ferramentas de BI
-- ⚡ **Performance:** Formato Parquet com compressão Snappy
-- 📊 **Flexível:** Power BI Desktop, Tableau, Python, Excel, Synapse, etc
-- 🔐 **Auditável:** Logs completos de acesso no Azure Monitor
 
 ---
 
@@ -35,8 +26,8 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 │              BANCO DE DADOS PRODUÇÃO (PostgreSQL)                │
 │                   Schema: <your_schema>                        │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │  data    │  │ tenants  │  │ related │  │   tables     │   │
-│  │  table   │  │  table   │  │ tables  │  │   (config)   │   │
+│  │ tickets  │  │  users   │  │  queues  │  │devices_data  │   │
+│  │tenants │  │  items   │  │locations │  │   stages     │   │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
                                  ↓
@@ -61,7 +52,8 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 │                                                                   │
 │  Container: tickets-data                                         │
 │  ├── tenant_<uuid_1>/  🔒 (Service Principal 1)                │
-│  │   ├── tickets/year=2026/month=01/day=14/*.parquet           │
+│  │   ├── tickets/format=parquet/year=2026/month=01/day=14/*.parquet           │
+│  │   ├── tickets/format=csv/year=2026/month=01/day=14/*.csv           │
 │  │                                                               │
 │  ├── tenant_<uuid_2>/  🔒 (Service Principal 2)                │
 │  │   └── ...                                                     │
@@ -118,7 +110,7 @@ Pipeline ETL automatizado para exportação de dados genéricos para Azure Data 
 
 ```bash
 # Criar Service Principal + configurar ACLs automaticamente
-python scripts/generate_azure_service_principals.py --tenants "Nome do Tenant"
+python scripts/generate_azure_service_principals.py --tenants "Nome da Tenant"
 ```
 
 ---
@@ -158,6 +150,9 @@ docker compose up -d
 psql -h <your_postgres_host> -U <your_postgres_user> -d <your_database> -f sql/01_create_bi_tickets_flat.sql
 psql -h <your_postgres_host> -U <your_postgres_user> -d <your_database> -f sql/02_create_bi_refresh_log.sql
 psql -h <your_postgres_host> -U <your_postgres_user> -d <your_database> -f sql/03_initial_refresh.sql
+psql -h <your_postgres_host> -U <your_postgres_user> -d <your_database> -f sql/04_create_export_watermark.sql
+psql -h <your_postgres_host> -U <your_postgres_user> -d <your_database> -f sql/05_extend_bi_refresh_log_azure.sql
+psql -h <your_postgres_host> -U <your_postgres_user> -d <your_database> -f sql/06_create_tenant_export_settings.sql
 ```
 
 ### 5. Ativar DAGs no Airflow
@@ -176,8 +171,9 @@ psql -h <your_postgres_host> -U <your_postgres_user> -d <your_database> -f sql/0
 
 Navegue até as DAGs e ative:
 
-- ✅ `tickets_powerbi_etl` (refresh views materializadas)
-- ✅ `export_tickets_to_azure_datalake` (exportação para Azure)
+- ✅ `tickets_powerbi_etl` (refresh views materializadas - 15 min)
+- ✅ `export_tickets_to_azure_datalake` (exportação incremental para Azure - 15 min)
+- ✅ `azure_datalake_compaction` (consolidação diária de arquivos - 2:00 AM)
 
 ### 7. Gerar Service Principals para Clientes
 
@@ -196,38 +192,6 @@ Envie para cada cliente (comunicação segura):
 - Tenant ID, Client ID, Client Secret
 - Documentação de acesso (pasta `azure_client_docs_*/`)
 - Exemplos de consumo (Power BI, Python, Tableau)
-
----
-
-## 📁 Estrutura do Projeto
-
-```
-airflow-datalake-etl-azure-multitenant/
-│
-├── 📘 AZURE_DATALAKE.md             # ⭐ Guia completo Azure Data Lake
-├── 🚀 QUICKSTART.md                 # Setup rápido
-│
-├── 🐳 docker-compose.yaml           # Orquestração Airflow
-├── 🐳 Dockerfile                    # Imagem customizada com Azure SDK
-├── 🔧 .env.example                  # Template de configuração
-│
-├── dags/
-│   ├── 🔄 tickets_powerbi_etl.py              # DAG: Refresh views (15min)
-│   └── ☁️ export_to_azure_datalake.py         # DAG: Export para Azure (15min)
-│
-├── sql/
-│   ├── 📜 README.md
-│   ├── 01_create_bi_tickets_flat.sql
-│   ├── 02_create_bi_refresh_log.sql
-│   └── 03_initial_refresh.sql
-│
-├── scripts/
-│   ├── 🐍 README.md
-│   └── 🤖 generate_azure_service_principals.py   # Gera Service Principals Azure
-│
-├── logs/                            # Logs do Airflow
-└── azure/                           # Scripts Azure gerados
-```
 
 ---
 
@@ -271,7 +235,7 @@ Container: tickets-data
 ### Exportação Azure Data Lake (Parquet)
 
 **Formato:** Parquet com compressão Snappy  
-**Particionamento:** `tenant_<uuid>/table_name/year=YYYY/month=MM/day=DD/*.parquet`  
+**Particionamento:** `tenant_<uuid>/table_name/format=parquet/year=YYYY/month=MM/day=DD/*.parquet`  
 **Retenção:** Últimas 24h (incremental)  
 **Atualização:** A cada 15 minutos  
 
@@ -304,7 +268,7 @@ service_client = DataLakeServiceClient(account_url, credential=credential)
 
 # Ler Parquet
 file_client = service_client.get_file_system_client("tickets-data") \
-    .get_file_client("tenant_<uuid>/tickets/year=2026/month=01/day=14/data.parquet")
+    .get_file_client("tenant_<uuid>/tickets/format=parquet/year=2026/month=01/day=14/data.parquet")
 
 df = pd.read_parquet(io.BytesIO(file_client.download_file().readall()))
 ```
@@ -417,7 +381,7 @@ http://localhost:8080
 ```kql
 // Logs de acesso ao Data Lake
 StorageBlobLogs
-| where AccountName == "ticketsdatalake"
+| where AccountName == "stticketsdatalake"
 | where OperationName in ("GetBlob", "ListBlobs")
 | summarize AccessCount = count() by CallerIpAddress, bin(TimeGenerated, 1h)
 ```
@@ -600,3 +564,35 @@ docker compose up -d
 **Solução:** Implementar DAG de compactação semanal para consolidar arquivos.
 
 ---
+
+## 📞 Suporte
+
+**Documentação Principal:**
+
+- **[AZURE_DATALAKE.md](AZURE_DATALAKE.md)** - Guia completo Azure
+- **[QUICKSTART.md](QUICKSTART.md)** - Setup rápido
+
+**Problemas Comuns:**
+
+- Verificar logs: `docker logs airflow-scheduler`
+- Testar Azure CLI: `az storage account show --name <storage>`
+- Validar Service Principals: Scripts em `azure/`
+
+---
+
+## ⚠️ Avisos Importantes
+
+### Segurança
+
+🔒 **Isolamento Físico:** Cada tenant em pasta separada no Azure  
+🔒 **Credenciais:** NUNCA commitar CLIENT_SECRET no Git  
+🔒 **Rotação:** Renovar Service Principals anualmente  
+🔒 **Auditoria:** Monitorar acessos no Azure Monitor  
+🔒 **Princípio do Menor Privilégio:** Read-only para clientes  
+
+### Performance
+
+⚡ Parquet otimizado para leitura colunar  
+⚡ Particionamento por data reduz scan de dados  
+⚡ Compactação semanal recomendada para consolidar arquivos  
+⚡ Considerar Hot → Cool → Archive Tier após 30/90/365 dias  
