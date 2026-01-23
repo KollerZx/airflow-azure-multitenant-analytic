@@ -153,6 +153,61 @@ services:
     networks:
       - airflow-network
 
+  airflow-log-cleaner:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Script de limpeza automática de logs antigos
+        echo "🧹 Iniciando serviço de limpeza de logs..."
+        echo "📅 Retenção: $${AIRFLOW__LOG_RETENTION_DAYS} dias"
+        echo "⏰ Frequência: a cada $${AIRFLOW__LOG_CLEANUP_FREQUENCY_MINUTES} minutos"
+
+        LOGS_DIR="$${AIRFLOW_HOME:-/opt/airflow}/logs"
+        RETENTION_DAYS="$${AIRFLOW__LOG_RETENTION_DAYS:-30}"
+        FREQUENCY_MINUTES="$${AIRFLOW__LOG_CLEANUP_FREQUENCY_MINUTES:-1440}"
+        SLEEP_SECONDS=$$((FREQUENCY_MINUTES * 60))
+
+        while true; do
+          echo ""
+          echo "🔍 [$(date -u '+%Y-%m-%d %H:%M:%S UTC')] Iniciando ciclo de limpeza..."
+          
+          # Contar logs antes da limpeza
+          LOG_COUNT_BEFORE=$$(find "$${LOGS_DIR}" -type f -name "*.log" 2>/dev/null | wc -l)
+          echo "📊 Arquivos de log encontrados: $${LOG_COUNT_BEFORE}"
+          
+          # Remover arquivos .log mais antigos que RETENTION_DAYS
+          DELETED=$$(find "$${LOGS_DIR}" -type f -name "*.log" -mtime +"$${RETENTION_DAYS}" -print -delete 2>/dev/null | wc -l)
+          
+          # Remover diretórios vazios
+          find "$${LOGS_DIR}" -type d -empty -delete 2>/dev/null
+          
+          echo "🗑️  Logs removidos: $${DELETED} arquivos"
+          
+          LOG_COUNT_AFTER=$$(find "$${LOGS_DIR}" -type f -name "*.log" 2>/dev/null | wc -l)
+          echo "📊 Arquivos restantes: $${LOG_COUNT_AFTER}"
+          
+          DISK_USAGE=$$(du -sh "$${LOGS_DIR}" 2>/dev/null | cut -f1)
+          echo "💾 Espaço utilizado: $${DISK_USAGE}"
+          
+          echo "⏳ Próxima limpeza em $${FREQUENCY_MINUTES} minutos..."
+          sleep "$${SLEEP_SECONDS}"
+        done
+    environment:
+      <<: *airflow-common-env
+      # Retenção de logs: manter logs físicos por 30 dias
+      AIRFLOW__LOG_RETENTION_DAYS: 30
+      # Frequência de limpeza: verificar diariamente (1440 minutos = 24 horas)
+      AIRFLOW__LOG_CLEANUP_FREQUENCY_MINUTES: 1440
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - airflow-network
+
 volumes:
   postgres-db-volume:
 
