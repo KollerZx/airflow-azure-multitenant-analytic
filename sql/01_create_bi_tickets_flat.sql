@@ -35,26 +35,31 @@ SELECT
             EXTRACT(EPOCH FROM (NOW() - t.created_at))/60
     END as duration_minutes,
     
-    -- Deadline do SLA
-    t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0) as sla_deadline,
+    -- Deadline do SLA (NULL quando não há tempo de cobertura definido)
+    CASE 
+        WHEN t.coverage_time IS NULL OR t.coverage_time = 0 THEN NULL
+        ELSE t.created_at + INTERVAL '1 minute' * t.coverage_time
+    END as sla_deadline,
     
     -- Status do SLA
     CASE 
-        WHEN t.finish_time IS NOT NULL AND t.finish_time <= (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0))
+        WHEN t.coverage_time IS NULL OR t.coverage_time = 0 THEN 'No SLA'
+        WHEN t.finish_time IS NOT NULL AND t.finish_time <= (t.created_at + INTERVAL '1 minute' * t.coverage_time)
             THEN 'Within SLA'
-        WHEN t.finish_time IS NOT NULL AND t.finish_time > (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0))
+        WHEN t.finish_time IS NOT NULL AND t.finish_time > (t.created_at + INTERVAL '1 minute' * t.coverage_time)
             THEN 'SLA Breached'
-        WHEN NOW() > (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0))
+        WHEN NOW() > (t.created_at + INTERVAL '1 minute' * t.coverage_time)
             THEN 'SLA At Risk'
         ELSE 'On Track'
     END as sla_status,
     
-    -- Minutos de breach (negativo = dentro do SLA)
+    -- Minutos de breach (NULL quando não há SLA definido)
     CASE 
+        WHEN t.coverage_time IS NULL OR t.coverage_time = 0 THEN NULL
         WHEN t.finish_time IS NOT NULL THEN
-            EXTRACT(EPOCH FROM (t.finish_time - (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0))))/60
+            EXTRACT(EPOCH FROM (t.finish_time - (t.created_at + INTERVAL '1 minute' * t.coverage_time)))/60
         ELSE
-            EXTRACT(EPOCH FROM (NOW() - (t.created_at + INTERVAL '1 minute' * COALESCE(t.coverage_time, 0))))/60
+            EXTRACT(EPOCH FROM (NOW() - (t.created_at + INTERVAL '1 minute' * t.coverage_time)))/60
     END as sla_breach_minutes,
     
     -- ===== REQUESTER (USER) =====
