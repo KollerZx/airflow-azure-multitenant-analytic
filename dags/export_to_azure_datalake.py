@@ -5,6 +5,11 @@ com isolamento por tenant_id.
 Cada tenant tem sua própria pasta: tenant_<uuid>/
 Estrutura: tenant_<uuid>/table_name/year=YYYY/month=MM/day=DD/*.parquet
 
+
+NOTA: Esta DAG é disparada automaticamente (dataset-aware scheduling) sempre que
+a view materializada bi_tickets_flat é atualizada pela DAG tickets_powerbi_etl.
+Nenhum schedule_interval fixo é necessário - a exportação ocorre imediatamente
+após o refresh da view ser concluído, garantindo que dados novos são sempre exportados.
 """
 
 from datetime import datetime, timedelta
@@ -16,6 +21,10 @@ import os
 from azure.storage.filedatalake import DataLakeServiceClient
 from azure.identity import ClientSecretCredential
 import io
+
+
+# Import dataset para criar dependência com DAG de refresh
+from datasets import VIEW_TICKETS_DATASET
 
 # Nome da conexão PostgreSQL (configurável via variável de ambiente)
 POSTGRES_CONN_ID = os.getenv('POSTGRES_CONN_ID', 'postgres_prod')
@@ -44,11 +53,14 @@ dag = DAG(
     'export_tickets_to_azure_datalake',
     default_args=default_args,
     description='Exporta dados do PostgreSQL para Azure Data Lake com isolamento físico por tenant_id',
-    schedule_interval='*/15 * * * *',  # A cada 15 minutos
+    # Dataset-aware scheduling: executa sempre que VIEW_TICKETS_DATASET é atualizado
+    # Substitui schedule_interval fixo por disparo reativo quando bi_tickets_flat é refreshed
+    schedule=[VIEW_TICKETS_DATASET],
     catchup=False,
     is_paused_upon_creation=False,  # DAG ativa por padrão
     default_view='grid',  # Visualização padrão na UI
-    tags=['azure', 'datalake', 'export', 'multi-tenant', 'parquet'],
+    tags=['azure', 'datalake', 'export', 'multi-tenant', 'parquet', 'dataset-aware'],
+    max_active_runs=1,  # Apenas uma execução por vez para evitar conflitos
 )
 
 

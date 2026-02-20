@@ -212,12 +212,26 @@ docker compose exec airflow-webserver airflow config list
 
 ### Passo 4: Gerar Service Principals por Tenant (1 hora)
 
-#### 4.1. Opções de Geração
+#### 4.1. Configurar Ambiente Virtual (Recomendado)
+
+Para evitar conflitos de dependências, é uma boa prática criar um ambiente virtual isolado.
+
+```bash
+# 1. Criar ambiente virtual
+python3 -m venv .venv
+
+# 2. Ativar o ambiente
+source .venv/bin/activate
+
+# Para desativar depois: deactivate
+```
+
+#### 4.2. Opções de Geração
 
 **Opção A: Todos os tenants**
 
 ```bash
-# Instalar dependências (se ainda não fez)
+# Instalar dependências (com ambiente ativado)
 pip install psycopg2-binary python-dotenv
 
 # Gerar para TODOS os tenants

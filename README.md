@@ -177,11 +177,20 @@ Navegue até as DAGs e ative:
 
 ### 7. Gerar Service Principals para Clientes
 
+Para executar os scripts Python, é recomendado criar um ambiente virtual para isolar as dependências.
+
 ```bash
+# 1. Criar e ativar ambiente virtual (faça isso uma vez)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. Instalar dependências
 pip install psycopg2-binary python-dotenv
+
+# 3. Executar o script de geração
 python scripts/generate_azure_service_principals.py
 
-# Executar script gerado
+# 4. Executar o script .sh gerado para criar os recursos no Azure
 bash azure/create_service_principals_*.sh
 ```
 

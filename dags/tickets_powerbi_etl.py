@@ -2,6 +2,9 @@
 DAG: tickets_powerbi_etl
 Descrição: Pipeline ETL para carregar dados de tickets no Power BI
 Frequência: A cada 15 minutos (configurável)
+
+NOTA: Esta DAG produz o dataset VIEW_TICKETS_DATASET (bi_tickets_flat).
+Quando o refresh é concluído, dispara automaticamente a DAG export_tickets_to_azure_datalake.
 """
 
 from airflow import DAG
@@ -11,6 +14,8 @@ from airflow.providers.postgres.hooks.postgres import PostgresHook
 from datetime import datetime, timedelta
 import logging
 import os
+
+from datasets import VIEW_TICKETS_DATASET
 
 # Nome da conexão PostgreSQL (configurável via variável de ambiente)
 POSTGRES_CONN_ID = os.getenv('POSTGRES_CONN_ID', 'postgres_prod')
@@ -142,6 +147,9 @@ with DAG(
             -- Refresh CONCURRENTLY permite leituras durante a atualização
             REFRESH MATERIALIZED VIEW CONCURRENTLY {POSTGRES_SCHEMA}.bi_tickets_flat;
         """,
+        # Dataset produzido: indica que esta task atualiza a view bi_tickets_flat
+        # DAGs que dependem deste dataset serão disparadas automaticamente
+        outlets=[VIEW_TICKETS_DATASET],
     )
     
     log_tickets_stats = PythonOperator(
